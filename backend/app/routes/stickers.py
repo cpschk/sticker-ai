@@ -102,34 +102,78 @@ async def suggest_sticker(request: StickerSuggestionRequest):
             # Create a simple avatar image for demo purposes
             avatar_img = Image.new('RGB', (400, 300), color='lightblue')
             
-            # Choose style color based on emotion
-            emotion_colors = {
-                'risa': (255, 255, 100),      # Yellow
-                'sorpresa': (255, 180, 255),  # Magenta
-                'enojo': (255, 150, 150),     # Red
-                'tristeza': (150, 200, 255),  # Blue
-                'confusión': (200, 150, 255), # Purple
-                'sarcasmo': (200, 200, 200),  # Gray
+            # Choose bubble style and font size based on emotion
+            bubble_styles = {
+                'risa': {
+                    'bubble_color': (255, 255, 180),
+                    'text_color': (30, 30, 30),
+                },
+                'sorpresa': {
+                    'bubble_color': (255, 225, 245),
+                    'text_color': (30, 10, 60),
+                },
+                'enojo': {
+                    'bubble_color': (255, 220, 220),
+                    'text_color': (80, 10, 10),
+                },
+                'tristeza': {
+                    'bubble_color': (220, 235, 255),
+                    'text_color': (20, 40, 80),
+                },
+                'confusión': {
+                    'bubble_color': (235, 225, 255),
+                    'text_color': (50, 20, 80),
+                },
+                'sarcasmo': {
+                    'bubble_color': (240, 240, 240),
+                    'text_color': (25, 25, 25),
+                },
             }
             
-            bubble_color = emotion_colors.get(
+            settings = bubble_styles.get(
                 emotion_result["emotion"],
-                (200, 200, 200)
+                {'bubble_color': (255, 255, 255), 'text_color': (20, 20, 20)}
             )
+            
+            intensity = emotion_result.get("intensity", 0.5)
+            bubble_width_ratio = 0.82
+            border_width = 4
+            tail_size = 18
+
+            if intensity >= 0.7:
+                bubble_width_ratio = 0.9
+                border_width = 5
+                tail_size = 22
+            elif intensity < 0.4:
+                bubble_width_ratio = 0.75
+                border_width = 3
+                tail_size = 14
+
+            font_size = 18
+            if len(request.text) > 90:
+                font_size = 16
+            if len(request.text) > 150:
+                font_size = 14
             
             style = SpeechBubbleStyle(
-                bubble_color=bubble_color,
-                border_color=tuple(max(0, c-50) for c in bubble_color),
-                border_width=2
+                bubble_color=settings['bubble_color'],
+                text_color=settings['text_color'],
+                border_color=(0, 0, 0),
+                border_width=border_width,
+                padding=18,
+                corner_radius=18,
+                tail_size=tail_size,
+                bubble_style="comic"
             )
             
-            # Add speech bubble to image using PIL Image directly
+            # Add comic-style speech bubble to the generated avatar image
             result_img = ImageWithSpeechBubble.add_speech_bubble_from_image(
                 image=avatar_img,
                 text=request.text,
                 style=style,
                 bubble_position="top",
-                font_size=16
+                bubble_width_ratio=bubble_width_ratio,
+                font_size=font_size
             )
             
             # Convert image to base64

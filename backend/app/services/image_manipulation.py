@@ -18,7 +18,8 @@ class SpeechBubbleStyle:
         padding: int = 15,
         corner_radius: int = 15,
         tail_size: int = 15,
-        tail_position: str = "bottom-left"  # bottom-left, bottom-right, top-left, top-right
+        tail_position: str = "bottom-left",  # bottom-left, bottom-right, top-left, top-right
+        bubble_style: str = "normal"
     ):
         """
         Initialize speech bubble style
@@ -32,6 +33,7 @@ class SpeechBubbleStyle:
             corner_radius: Radius of rounded corners
             tail_size: Size of the tail/pointer
             tail_position: Position of the tail
+            bubble_style: Style of bubble, e.g. "normal" or "comic"
         """
         self.bubble_color = bubble_color
         self.text_color = text_color
@@ -41,6 +43,7 @@ class SpeechBubbleStyle:
         self.corner_radius = corner_radius
         self.tail_size = tail_size
         self.tail_position = tail_position
+        self.bubble_style = bubble_style
 
 
 class ImageWithSpeechBubble:
@@ -99,6 +102,76 @@ class ImageWithSpeechBubble:
         )
     
     @staticmethod
+    def _draw_text_with_outline(
+        draw: ImageDraw.ImageDraw,
+        position: Tuple[int, int],
+        text: str,
+        font: ImageFont.FreeTypeFont,
+        fill: Tuple[int, int, int],
+        outline_color: Tuple[int, int, int],
+        outline_width: int = 1
+    ):
+        """Draw text with a comic-style outline"""
+        x, y = position
+        try:
+            draw.text(
+                (x, y),
+                text,
+                font=font,
+                fill=fill,
+                stroke_width=outline_width,
+                stroke_fill=outline_color
+            )
+        except TypeError:
+            for dx in range(-outline_width, outline_width + 1):
+                for dy in range(-outline_width, outline_width + 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
+            draw.text((x, y), text, font=font, fill=fill)
+
+    @staticmethod
+    def _draw_centered_text(
+        draw: ImageDraw.ImageDraw,
+        xy: Tuple[int, int, int, int],
+        text: str,
+        font: ImageFont.FreeTypeFont,
+        style: SpeechBubbleStyle
+    ):
+        """Draw multiline text centered inside a bubble"""
+        x1, y1, x2, y2 = xy
+        lines = text.split('\n')
+        line_sizes = [font.getbbox(line) for line in lines]
+        line_widths = [bbox[2] - bbox[0] for bbox in line_sizes]
+        line_heights = [bbox[3] - bbox[1] for bbox in line_sizes]
+        total_height = sum(line_heights) + (len(lines) - 1) * 4
+
+        bubble_width = x2 - x1
+        bubble_height = y2 - y1
+        current_y = y1 + ((bubble_height - total_height) // 2)
+
+        for line, width, height in zip(lines, line_widths, line_heights):
+            text_x = x1 + (bubble_width - width) // 2
+            text_y = current_y
+            if style.bubble_style == "comic":
+                ImageWithSpeechBubble._draw_text_with_outline(
+                    draw,
+                    (text_x, text_y),
+                    line,
+                    font,
+                    style.text_color,
+                    style.border_color,
+                    outline_width=1
+                )
+            else:
+                draw.text(
+                    (text_x, text_y),
+                    line,
+                    fill=style.text_color,
+                    font=font
+                )
+            current_y += height + 4
+
     def _draw_speech_bubble(
         image: Image.Image,
         xy: Tuple[int, int, int, int],
@@ -112,17 +185,41 @@ class ImageWithSpeechBubble:
         x1, y1, x2, y2 = xy
         
         # Draw bubble background
-        draw.polygon(
-            [(x1, y1), (x2, y1), (x2, y2), (x1, y2)],
-            fill=style.bubble_color
-        )
-        
-        # Draw border
-        draw.rectangle(
-            xy,
-            outline=style.border_color,
-            width=style.border_width
-        )
+        if style.bubble_style == "comic":
+            spike = min(12, style.corner_radius)
+            gap = max(20, (x2 - x1) // 8)
+            points = []
+            current_x = x1
+            while current_x < x2:
+                points.append((current_x, y1 - (spike if len(points) % 2 == 0 else 0)))
+                current_x += gap
+            points.append((x2, y1))
+            current_y = y1
+            while current_y < y2:
+                points.append((x2 + (spike if len(points) % 2 == 0 else 0), current_y))
+                current_y += gap
+            points.append((x2, y2))
+            current_x = x2
+            while current_x > x1:
+                points.append((current_x, y2 + (spike if len(points) % 2 == 0 else 0)))
+                current_x -= gap
+            points.append((x1, y2))
+            current_y = y2
+            while current_y > y1:
+                points.append((x1 - (spike if len(points) % 2 == 0 else 0), current_y))
+                current_y -= gap
+            draw.polygon(points, fill=style.bubble_color)
+            draw.line(points + [points[0]], fill=style.border_color, width=style.border_width)
+        else:
+            draw.polygon(
+                [(x1, y1), (x2, y1), (x2, y2), (x1, y2)],
+                fill=style.bubble_color
+            )
+            draw.rectangle(
+                xy,
+                outline=style.border_color,
+                width=style.border_width
+            )
         
         # Draw tail
         tail_xoffset = (x2 - x1) // 3 if "left" in style.tail_position else 2 * (x2 - x1) // 3
@@ -143,18 +240,16 @@ class ImageWithSpeechBubble:
         draw.polygon(tail_points, fill=style.bubble_color)
         draw.polygon(tail_points, outline=style.border_color, width=style.border_width)
         
-        # Draw text
+        # Draw centered text
         if font is None:
             font = ImageFont.load_default()
-        
-        text_x = x1 + style.padding
-        text_y = y1 + style.padding
-        
-        draw.text(
-            (text_x, text_y),
+
+        ImageWithSpeechBubble._draw_centered_text(
+            draw,
+            xy,
             text,
-            fill=style.text_color,
-            font=font
+            font,
+            style
         )
         
         return image
