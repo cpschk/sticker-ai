@@ -14,21 +14,30 @@ object ApiClient {
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    private const val BASE_URL = "http://192.168.1.89:8000/api/v1/suggest-sticker"
+    private const val HOST = "http://192.168.1.89:8000/api/v1"
 
+    /** Analiza texto y devuelve emoción + sugerencias (sin imagen). */
     fun getSticker(text: String, callback: Callback) {
         val body = JSONObject().apply { put("text", text) }
-            .toString()
-            .toRequestBody(JSON)
+            .toString().toRequestBody(JSON)
 
-        val request = Request.Builder()
-            .url(BASE_URL)
-            .post(body)
-            .build()
+        client.newCall(
+            Request.Builder().url("$HOST/suggest-sticker").post(body).build()
+        ).enqueue(callback)
+    }
 
-        client.newCall(request).enqueue(callback)
+    /** Genera el sticker final (personaje + globo) para un texto y emoción dados. */
+    fun generateImage(text: String, emotion: String, callback: Callback) {
+        val body = JSONObject().apply {
+            put("text", text)
+            put("emotion", emotion)
+        }.toString().toRequestBody(JSON)
+
+        client.newCall(
+            Request.Builder().url("$HOST/generate-image").post(body).build()
+        ).enqueue(callback)
     }
 }

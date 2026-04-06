@@ -7,17 +7,11 @@ import okhttp3.Callback
 import okhttp3.Response
 import org.json.JSONObject
 import java.io.IOException
-import java.util.Collections
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 
 object SuggestionManager {
 
-    private const val IMAGE_COUNT = 3
-
     data class StickerResult(
         val emotion: String,
-        val images: List<String>,         // hasta IMAGE_COUNT imágenes base64
         val suggestions: List<Suggestion>
     )
 
@@ -32,52 +26,66 @@ object SuggestionManager {
         fun onError()
     }
 
+    interface ImageCallback {
+        fun onImage(base64: String)
+        fun onError()
+    }
+
     private val mainHandler = Handler(Looper.getMainLooper())
 
+    /** Obtiene emoción + sugerencias para un texto (sin generar imagen). */
     fun fetchSuggestion(text: String, callback: SuggestionCallback) {
-        val images = Collections.synchronizedList(mutableListOf<String>())
-        var sharedEmotion = ""
-        var sharedSuggestions = emptyList<Suggestion>()
-        val metadataCaptured = AtomicBoolean(false)
-        val remaining = AtomicInteger(IMAGE_COUNT)
+        ApiClient.getSticker(text, object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                e.printStackTrace()
+                mainHandler.post { callback.onError() }
+            }
 
-        val tryDeliver: () -> Unit = {
-            if (remaining.decrementAndGet() == 0) {
-                mainHandler.post {
-                    if (images.isEmpty()) callback.onError()
-                    else callback.onResult(StickerResult(sharedEmotion, images.toList(), sharedSuggestions))
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    if (!response.isSuccessful) {
+                        mainHandler.post { callback.onError() }
+                        return
+                    }
+                    runCatching {
+                        val json        = JSONObject(response.body!!.string())
+                        val emotion     = json.optString("detected_emotion", "")
+                        val suggestions = parseSuggestions(json)
+                        mainHandler.post { callback.onResult(StickerResult(emotion, suggestions)) }
+                    }.onFailure {
+                        it.printStackTrace()
+                        mainHandler.post { callback.onError() }
+                    }
                 }
             }
-        }
+        })
+    }
 
-        repeat(IMAGE_COUNT) {
-            ApiClient.getSticker(text, object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    e.printStackTrace()
-                    tryDeliver()
-                }
+    /** Genera el sticker final (personaje + globo) y devuelve su base64. */
+    fun generateImage(text: String, emotion: String, callback: ImageCallback) {
+        ApiClient.generateImage(text, emotion, object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                e.printStackTrace()
+                mainHandler.post { callback.onError() }
+            }
 
-                override fun onResponse(call: Call, response: Response) {
-                    response.use {
-                        if (response.isSuccessful) {
-                            runCatching {
-                                val json = JSONObject(response.body!!.string())
-
-                                // Capturar emoción y sugerencias solo una vez
-                                if (metadataCaptured.compareAndSet(false, true)) {
-                                    sharedEmotion = json.optString("detected_emotion", "")
-                                    sharedSuggestions = parseSuggestions(json)
-                                }
-
-                                val img = json.optString("generated_image_base64", "")
-                                if (img.isNotEmpty()) images.add(img)
-                            }
-                        }
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    if (!response.isSuccessful) {
+                        mainHandler.post { callback.onError() }
+                        return
                     }
-                    tryDeliver()
+                    runCatching {
+                        val json   = JSONObject(response.body!!.string())
+                        val base64 = json.getString("image_base64")
+                        mainHandler.post { callback.onImage(base64) }
+                    }.onFailure {
+                        it.printStackTrace()
+                        mainHandler.post { callback.onError() }
+                    }
                 }
-            })
-        }
+            }
+        })
     }
 
     private fun parseSuggestions(json: JSONObject): List<Suggestion> {

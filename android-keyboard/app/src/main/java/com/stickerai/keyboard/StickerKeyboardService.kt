@@ -96,8 +96,11 @@ class StickerKeyboardService : InputMethodService() {
         val text = currentInputConnection
             ?.getTextBeforeCursor(300, 0)
             ?.toString()
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() } ?: return
+            ?.trim() ?: ""
+
+        updateFabState(hasText = text.isNotEmpty())
+
+        if (text.isEmpty()) return
         // Solo programa fetch si el texto realmente cambió (ignora movimientos de cursor)
         if (text != lastFetchedText) scheduleFetch(text)
     }
@@ -106,11 +109,15 @@ class StickerKeyboardService : InputMethodService() {
     override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
         if (!restarting) {
-            shiftState = ShiftState.ONE_SHOT  // mayúscula al inicio de cada campo
-            mode       = Mode.ALPHA
-            refreshKeyLabels()
-            // Limpiar PNGs temporales de stickers de sesiones anteriores
+            shiftState      = ShiftState.ONE_SHOT
+            mode            = Mode.ALPHA
+            lastFetchedText = ""
             File(cacheDir, "stickers").listFiles()?.forEach { it.delete() }
+            if (keysContainer?.childCount ?: 0 > 0) refreshKeyLabels()
+            // Verificar si el campo ya tiene texto (ej: editar un mensaje)
+            val existing = currentInputConnection
+                ?.getTextBeforeCursor(300, 0)?.toString()?.trim() ?: ""
+            updateFabState(hasText = existing.isNotEmpty())
         }
     }
 
@@ -158,6 +165,7 @@ class StickerKeyboardService : InputMethodService() {
 
         return Button(this).apply {
             text = label
+            isAllCaps = false   // Android pone allCaps=true por defecto en Button
             textSize = if (special) 12f else 15f
             typeface = if (special) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
             setPadding(0, 0, 0, 0)
@@ -318,27 +326,33 @@ class StickerKeyboardService : InputMethodService() {
     }
 
     private fun updateSuggestionBar(result: SuggestionManager.StickerResult) {
-        val bar = suggestionBar ?: return
-        bar.removeAllViews()
-        result.images.take(3).forEach { base64 ->
-            bar.addView(makeStickerImage(base64, result.emotion))
-        }
+        suggestionBar?.removeAllViews()
+        // suggest-sticker ya no devuelve imágenes; la barra queda vacía.
+        if (fabExpanded) buildStickerBubbles(result)
     }
 
-    /** ImageView con la imagen base64 del backend. Al tocarla intenta insertar la imagen. */
-    private fun makeStickerImage(base64: String, emotion: String): ImageView {
-        val bytes  = Base64.decode(base64, Base64.DEFAULT)
-        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+    /**
+     * Al tocar una burbuja: llama a /generate-image con el texto actual y la emoción.
+     * Atenúa la burbuja mientras carga y, al recibir el PNG, lo inserta en el chat.
+     */
+    private fun generateAndInsertSticker(bubbleView: ImageView, emotion: String) {
+        val text = currentInputConnection
+            ?.getTextBeforeCursor(300, 0)?.toString()?.trim()
+            ?.takeIf { it.isNotEmpty() } ?: return
 
-        return ImageView(this).apply {
-            setImageBitmap(bitmap)
-            scaleType    = ImageView.ScaleType.FIT_CENTER
-            elevation    = dp(2).toFloat()
-            layoutParams = LinearLayout.LayoutParams(dp(48), dp(48)).apply {
-                setMargins(6, 4, 6, 4)
+        bubbleView.animate().alpha(0.4f).setDuration(150).start()
+        bubbleView.isClickable = false
+
+        SuggestionManager.generateImage(text, emotion, object : SuggestionManager.ImageCallback {
+            override fun onImage(base64: String) {
+                insertSticker(base64, emotion)
+                collapseFab()
             }
-            setOnClickListener { insertSticker(base64, emotion) }
-        }
+            override fun onError() {
+                bubbleView.animate().alpha(1f).setDuration(150).start()
+                bubbleView.isClickable = true
+            }
+        })
     }
 
     /**
@@ -357,15 +371,19 @@ class StickerKeyboardService : InputMethodService() {
      * Devuelve true si el insert fue aceptado, false si el editor no lo soporta.
      */
     private fun tryCommitContent(base64: String, emotion: String): Boolean {
-        val editorInfo = currentInputEditorInfo ?: return false
+        val editorInfo = currentInputEditorInfo    ?: return false
+        val ic         = currentInputConnection   ?: return false
 
-        // Verificar que el editor acepte image/png o image/*
+        // Verificar que el editor acepte image/png.
+        // Algunos declaran "image/*" (wildcard) → un PNG siempre califica.
         val mimeTypes = EditorInfoCompat.getContentMimeTypes(editorInfo)
-        val canReceive = mimeTypes.any { it == "image/png" || it == "image/*" }
+        val canReceive = mimeTypes.any { mime ->
+            mime == "image/png" || mime == "image/*" ||
+            (mime.endsWith("/*") && "image/png".startsWith(mime.substringBefore("/*")))
+        }
         if (!canReceive) return false
 
         return runCatching {
-            // Escribir PNG temporal en caché interna
             val dir  = File(cacheDir, "stickers").also { it.mkdirs() }
             val file = File(dir, "sticker_${System.currentTimeMillis()}.png")
             file.writeBytes(Base64.decode(base64, Base64.DEFAULT))
@@ -377,7 +395,7 @@ class StickerKeyboardService : InputMethodService() {
                 null
             )
             InputConnectionCompat.commitContent(
-                currentInputConnection!!,
+                ic,
                 editorInfo,
                 contentInfo,
                 InputConnectionCompat.INPUT_CONTENT_GRANT_READ_URI_PERMISSION,
@@ -389,10 +407,30 @@ class StickerKeyboardService : InputMethodService() {
     // ── FAB ───────────────────────────────────────────────────────────────────
 
     private fun setupFab() {
+        updateFabState(hasText = false)  // arranca desactivado
         fabSticker?.setOnClickListener {
+            if (!fabEnabled) return@setOnClickListener
             if (fabExpanded) collapseFab()
             else             expandFab()
         }
+    }
+
+    private var fabEnabled = false
+
+    private fun updateFabState(hasText: Boolean) {
+        if (fabEnabled == hasText) return  // sin cambio, no redibujar
+        fabEnabled = hasText
+        fabSticker?.apply {
+            setBackgroundResource(
+                if (hasText) R.drawable.fab_bg else R.drawable.fab_bg_disabled
+            )
+            animate().scaleX(if (hasText) 1f else 0.85f)
+                     .scaleY(if (hasText) 1f else 0.85f)
+                     .setDuration(150)
+                     .start()
+        }
+        // Si se desactiva mientras estaba expandido, colapsar
+        if (!hasText && fabExpanded) collapseFab()
     }
 
     private fun expandFab() {
@@ -400,21 +438,14 @@ class StickerKeyboardService : InputMethodService() {
         val fab       = fabSticker   ?: return
         val result    = lastFabResult
 
-        // Construir burbujas con el último resultado; si aún no hay, pedir al backend
         container.removeAllViews()
-        if (result != null && result.images.isNotEmpty()) {
+        if (result != null) {
             buildStickerBubbles(result)
         } else {
-            // Sin resultados todavía — lanza fetch del texto actual
-            val text = currentInputConnection
-                ?.getTextBeforeCursor(300, 0)
-                ?.toString()?.trim()
-                ?.takeIf { it.isNotEmpty() }
-            if (text != null) {
-                fetchWithCache(text)
-                // Muestra indicador vacío mientras carga
-                buildStickerBubbles(SuggestionManager.StickerResult("", emptyList(), emptyList()))
-            }
+            // Sin resultado aún: mostrar placeholders y lanzar fetch
+            repeat(3) { container.addView(makePlaceholderBubble()) }
+            currentInputConnection?.getTextBeforeCursor(300, 0)?.toString()?.trim()
+                ?.takeIf { it.isNotEmpty() }?.let { fetchWithCache(it) }
         }
 
         container.visibility = View.VISIBLE
@@ -423,22 +454,27 @@ class StickerKeyboardService : InputMethodService() {
         // Rotar el ícono del FAB 45° para indicar "cerrar"
         fab.animate().rotation(45f).setDuration(200).start()
 
-        // Animar entrada de cada burbuja con stagger
-        for (i in 0 until container.childCount) {
+        // Animar entrada de derecha a izquierda con stagger
+        // La burbuja más cercana al FAB (última en el layout) entra primero
+        val count = container.childCount
+        for (i in 0 until count) {
             val child = container.getChildAt(i)
-            child.scaleX = 0f
-            child.scaleY = 0f
-            child.alpha  = 0f
-            val delay = i * 60L
+            val translationStart = dp(44 + (count - i) * 12).toFloat()
+            child.scaleX       = 0f
+            child.scaleY       = 0f
+            child.alpha        = 0f
+            child.translationX = translationStart
+            val delay = (count - 1 - i) * 55L  // la más lejana al FAB entra última
             AnimatorSet().apply {
                 playTogether(
-                    ObjectAnimator.ofFloat(child, "scaleX", 0f, 1f),
-                    ObjectAnimator.ofFloat(child, "scaleY", 0f, 1f),
-                    ObjectAnimator.ofFloat(child, "alpha",  0f, 1f)
+                    ObjectAnimator.ofFloat(child, "scaleX",       0f, 1f),
+                    ObjectAnimator.ofFloat(child, "scaleY",       0f, 1f),
+                    ObjectAnimator.ofFloat(child, "alpha",        0f, 1f),
+                    ObjectAnimator.ofFloat(child, "translationX", translationStart, 0f)
                 )
-                duration    = 220
-                startDelay  = delay
-                interpolator = OvershootInterpolator(2f)
+                duration     = 240
+                startDelay   = delay
+                interpolator = OvershootInterpolator(1.8f)
                 start()
             }
         }
@@ -450,69 +486,53 @@ class StickerKeyboardService : InputMethodService() {
 
         fab.animate().rotation(0f).setDuration(200).start()
 
-        // Animar salida en orden inverso
+        // Animar salida hacia la derecha — la más lejana al FAB sale primero
         val count = container.childCount
-        for (i in count - 1 downTo 0) {
+        for (i in 0 until count) {
             val child = container.getChildAt(i)
-            val delay = (count - 1 - i) * 50L
+            val translationEnd = dp(44 + (count - i) * 12).toFloat()
+            val delay = i * 45L
             child.animate()
                 .scaleX(0f).scaleY(0f).alpha(0f)
+                .translationX(translationEnd)
                 .setDuration(150)
                 .setStartDelay(delay)
-                .withEndAction { if (i == 0) container.visibility = View.GONE }
+                .withEndAction { if (i == count - 1) container.visibility = View.GONE }
                 .start()
         }
         fabExpanded = false
     }
 
-    /** Crea los ImageView circulares dentro del contenedor del FAB. */
+    /**
+     * 3 burbujas idénticas — muestran el ícono del personaje (placeholder).
+     * Al tocar → /generate-image → sticker final (gato + globo con texto actual) → chat.
+     */
     private fun buildStickerBubbles(result: SuggestionManager.StickerResult) {
         val container = fabContainer ?: return
         container.removeAllViews()
-
-        val images = result.images.take(3)
-
-        if (images.isEmpty()) {
-            // Placeholder animado mientras carga
-            repeat(3) {
-                container.addView(makePlaceholderBubble())
-            }
-            return
-        }
-
-        images.forEachIndexed { idx, base64 ->
-            container.addView(makeStickerBubble(base64, result.emotion, idx))
-        }
+        repeat(3) { container.addView(makeStickerBubble(result.emotion)) }
     }
 
-    private fun makeStickerBubble(base64: String, emotion: String, index: Int): ImageView {
-        val bytes  = Base64.decode(base64, Base64.DEFAULT)
-        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-        val size   = dp(52)
-
+    private fun makeStickerBubble(emotion: String): ImageView {
+        val size = dp(40)
         return ImageView(this).apply {
-            setImageBitmap(bitmap)
-            scaleType    = ImageView.ScaleType.CENTER_CROP
-            background   = resources.getDrawable(R.drawable.sticker_bubble_bg, null)
-            elevation    = dp(6).toFloat()
+            setImageResource(android.R.drawable.ic_menu_gallery)
+            scaleType     = ImageView.ScaleType.FIT_CENTER
+            background    = resources.getDrawable(R.drawable.sticker_bubble_bg, null)
+            elevation     = dp(6).toFloat()
             clipToOutline = true
-            layoutParams = LinearLayout.LayoutParams(size, size).apply {
-                setMargins(0, 0, 0, dp(6))
-            }
-            setOnClickListener {
-                insertSticker(base64, emotion)
-                collapseFab()
-            }
+            layoutParams  = LinearLayout.LayoutParams(size, size).apply { setMargins(0, 0, dp(8), 0) }
+            setOnClickListener { generateAndInsertSticker(this, emotion) }
         }
     }
 
     private fun makePlaceholderBubble(): View {
-        val size = dp(52)
+        val size = dp(40)
         return View(this).apply {
             setBackgroundResource(R.drawable.sticker_bubble_bg)
             alpha        = 0.4f
             layoutParams = LinearLayout.LayoutParams(size, size).apply {
-                setMargins(0, 0, 0, dp(6))
+                setMargins(0, 0, dp(8), 0)
             }
         }
     }
