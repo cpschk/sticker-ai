@@ -47,9 +47,11 @@ class EmotionDetectorService:
         },
         Emotion.TRISTEZA: {
             "keywords": [
-                "triste", "llorar", "llorando", "lágrimas", "deprimido", "depre", "mal",
-                "horrible", "peor", "nunca", "no hay esperanza", "fin", "adiós", "chao",
-                "me duele", "corazón", "dolor", "sufriendo", "infeliz", "desgraciado"
+                "triste", "tristeza", "llorar", "llorando", "lloré", "lloro", "llore",
+                "lágrimas", "lagrimas", "deprimido", "depre", "mal",
+                "horrible", "peor", "nunca", "no hay esperanza", "fin", "adiós", "adios",
+                "chao", "me duele", "corazón", "corazon", "dolor", "sufriendo", "infeliz",
+                "desgraciado", "solo", "sola", "vacío", "vacio"
             ],
             "patterns": [r":'?\(", r"T_T", r"='?\("],
             "weight": 0.95
@@ -159,23 +161,27 @@ class EmotionDetectorService:
             return {
                 "emotion": None,
                 "intensity": 0.0,
+                "intensity_level": "baja",
                 "confidence": 0.0,
+                "all_scores": {},
                 "details": "Empty text"
             }
-        
+
         emotion_scores = {}
-        
+
         # Calculate scores for each emotion
         for emotion in Emotion:
             matched, score = cls._match_keywords(text, emotion)
             if matched:
                 emotion_scores[emotion] = score
-        
+
         if not emotion_scores:
             return {
                 "emotion": None,
                 "intensity": 0.0,
+                "intensity_level": "baja",
                 "confidence": 0.0,
+                "all_scores": {},
                 "details": "No emotion detected"
             }
         

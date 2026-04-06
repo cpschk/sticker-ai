@@ -1,259 +1,402 @@
-"""Image manipulation service for adding speech bubbles to avatar poses"""
-from PIL import Image, ImageDraw, ImageFont
-from typing import Tuple, Optional
+"""Image manipulation service: speech bubbles + WhatsApp sticker generation."""
+from __future__ import annotations
+
 import os
 import textwrap
+from collections import deque
 from pathlib import Path
+from typing import Optional, Tuple
 
+from PIL import Image, ImageDraw, ImageFilter, ImageFont
+
+
+# ── Font helpers ──────────────────────────────────────────────────────────────
+
+_FONT_CANDIDATES = [
+    "C:\\Windows\\Fonts\\arialbd.ttf",   # Arial Bold (Windows)
+    "C:\\Windows\\Fonts\\arial.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/System/Library/Fonts/Helvetica.ttc",
+]
+
+
+def _load_font(size: int, font_path: Optional[str] = None) -> ImageFont.FreeTypeFont:
+    candidates = ([font_path] if font_path else []) + _FONT_CANDIDATES
+    for path in candidates:
+        if path and os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    return ImageFont.load_default()
+
+
+# ── Background removal ───────────────────────────────────────────────────────
+
+def remove_background(image: Image.Image, tolerance: int = 30) -> Image.Image:
+    """
+    Remove the background of *image* using a flood-fill from all four corners.
+
+    Works well for cartoon/sticker images that have a solid or near-solid background.
+    Returns an RGBA image with the background made transparent.
+
+    Args:
+        image:     Input PIL image (any mode).
+        tolerance: Max color distance (per channel) to consider a pixel as background.
+                   Higher values remove more; lower values are more conservative.
+    """
+    img = image.convert("RGBA")
+    w, h = img.size
+    pixels = img.load()
+
+    def color_distance(c1: tuple, c2: tuple) -> int:
+        return max(abs(int(c1[i]) - int(c2[i])) for i in range(3))
+
+    # Sample background color from the four corners
+    corners = [pixels[0, 0], pixels[w - 1, 0], pixels[0, h - 1], pixels[w - 1, h - 1]]
+    # Use the most common corner color (mode of R+G+B average)
+    bg_color = min(corners, key=lambda c: sum(c[:3]))  # darkest corner → least likely to be art
+
+    # Prefer a lighter corner as background (white/gray backgrounds are most common)
+    bg_color = max(corners, key=lambda c: sum(c[:3]))
+
+    visited = set()
+    queue: deque = deque()
+
+    # Seed flood-fill from all four corners
+    seeds = [(0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1)]
+    for sx, sy in seeds:
+        if (sx, sy) not in visited and color_distance(pixels[sx, sy], bg_color) <= tolerance:
+            queue.append((sx, sy))
+            visited.add((sx, sy))
+
+    while queue:
+        x, y = queue.popleft()
+        # Make transparent
+        r, g, b, a = pixels[x, y]
+        pixels[x, y] = (r, g, b, 0)
+
+        for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+            if 0 <= nx < w and 0 <= ny < h and (nx, ny) not in visited:
+                if color_distance(pixels[nx, ny], bg_color) <= tolerance:
+                    visited.add((nx, ny))
+                    queue.append((nx, ny))
+
+    # Smooth the alpha edge with a slight blur on the alpha channel
+    r, g, b, a = img.split()
+    a = a.filter(ImageFilter.SMOOTH)
+    return Image.merge("RGBA", (r, g, b, a))
+
+
+# ── Text helpers ──────────────────────────────────────────────────────────────
+
+def _wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int) -> list[str]:
+    """Wrap *text* so each rendered line fits within *max_width* pixels."""
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = (current + " " + word).strip()
+        w = font.getbbox(candidate)[2] - font.getbbox(candidate)[0]
+        if w <= max_width:
+            current = candidate
+        else:
+            if current:
+                lines.append(current)
+            current = word
+    if current:
+        lines.append(current)
+    return lines or [""]
+
+
+def _measure_lines(lines: list[str], font: ImageFont.FreeTypeFont) -> Tuple[int, int]:
+    """Return (max_line_width, total_height) for a list of lines."""
+    line_height = font.getbbox("Ag")[3] - font.getbbox("Ag")[1] + 4
+    max_w = max((font.getbbox(l)[2] - font.getbbox(l)[0]) for l in lines)
+    total_h = line_height * len(lines) - 4
+    return max_w, total_h
+
+
+# ── Bubble drawing ────────────────────────────────────────────────────────────
+
+def _draw_rounded_rect(
+    draw: ImageDraw.ImageDraw,
+    box: Tuple[int, int, int, int],
+    radius: int,
+    fill: Tuple[int, int, int, int],
+    outline: Tuple[int, int, int, int],
+    border: int,
+) -> None:
+    """Properly filled rounded rectangle with outline."""
+    x1, y1, x2, y2 = box
+    r = min(radius, (x2 - x1) // 2, (y2 - y1) // 2)
+
+    # Fill body
+    draw.rectangle([x1 + r, y1, x2 - r, y2], fill=fill)
+    draw.rectangle([x1, y1 + r, x2, y2 - r], fill=fill)
+    draw.pieslice([x1,       y1,       x1 + 2*r, y1 + 2*r], 180, 270, fill=fill)
+    draw.pieslice([x2 - 2*r, y1,       x2,       y1 + 2*r], 270, 360, fill=fill)
+    draw.pieslice([x2 - 2*r, y2 - 2*r, x2,       y2      ], 0,   90,  fill=fill)
+    draw.pieslice([x1,       y2 - 2*r, x1 + 2*r, y2      ], 90,  180, fill=fill)
+
+    # Outline — draw the same shape with no fill, thick line
+    for i in range(border):
+        bx1, by1, bx2, by2 = x1 + i, y1 + i, x2 - i, y2 - i
+        br = max(r - i, 0)
+        draw.arc([bx1,          by1,          bx1 + 2*br, by1 + 2*br], 180, 270, outline)
+        draw.arc([bx2 - 2*br,   by1,          bx2,        by1 + 2*br], 270, 360, outline)
+        draw.arc([bx2 - 2*br,   by2 - 2*br,   bx2,        by2       ], 0,   90,  outline)
+        draw.arc([bx1,          by2 - 2*br,   bx1 + 2*br, by2       ], 90,  180, outline)
+        draw.line([bx1 + br, by1, bx2 - br, by1],    fill=outline)
+        draw.line([bx1 + br, by2, bx2 - br, by2],    fill=outline)
+        draw.line([bx1, by1 + br, bx1, by2 - br],    fill=outline)
+        draw.line([bx2, by1 + br, bx2, by2 - br],    fill=outline)
+
+
+def _draw_tail(
+    draw: ImageDraw.ImageDraw,
+    bubble_box: Tuple[int, int, int, int],
+    tail_size: int,
+    fill: Tuple[int, int, int, int],
+    outline: Tuple[int, int, int, int],
+    border: int,
+    tail_x_ratio: float = 0.3,
+) -> None:
+    """
+    Draw the speech-bubble tail pointing DOWNWARD from the bottom of the bubble.
+    *tail_x_ratio* (0‥1) controls where along the bottom edge the tail originates.
+    """
+    x1, y1, x2, y2 = bubble_box
+    tip_x = int(x1 + (x2 - x1) * tail_x_ratio)
+    base_half = tail_size // 2
+
+    tail_poly = [
+        (tip_x - base_half, y2),
+        (tip_x + base_half, y2),
+        (tip_x,             y2 + tail_size),
+    ]
+    draw.polygon(tail_poly, fill=fill)
+    draw.polygon(tail_poly, outline=outline)
+    # Thicken outline
+    for _ in range(border - 1):
+        draw.polygon(tail_poly, outline=outline)
+
+
+def _draw_text_in_bubble(
+    draw: ImageDraw.ImageDraw,
+    lines: list[str],
+    font: ImageFont.FreeTypeFont,
+    bubble_box: Tuple[int, int, int, int],
+    text_color: Tuple[int, int, int, int],
+    padding: int,
+) -> None:
+    x1, y1, x2, y2 = bubble_box
+    inner_w = x2 - x1 - 2 * padding
+    inner_h = y2 - y1 - 2 * padding
+    line_height = font.getbbox("Ag")[3] - font.getbbox("Ag")[1] + 4
+    total_h = line_height * len(lines) - 4
+    start_y = y1 + padding + (inner_h - total_h) // 2
+
+    for i, line in enumerate(lines):
+        lw = font.getbbox(line)[2] - font.getbbox(line)[0]
+        lx = x1 + padding + (inner_w - lw) // 2
+        ly = start_y + i * line_height
+        draw.text((lx, ly), line, font=font, fill=text_color)
+
+
+# ── Main public function ──────────────────────────────────────────────────────
+
+def generate_sticker(
+    base_image: Image.Image,
+    text: str,
+    *,
+    output_path: Optional[str] = None,
+    output_format: str = "WEBP",       # "WEBP" or "PNG"
+    canvas_size: int = 512,            # WhatsApp requires 512×512
+    bubble_color: Tuple[int, int, int, int] = (255, 255, 255, 255),
+    border_color: Tuple[int, int, int, int] = (20, 20, 20, 255),
+    text_color: Tuple[int, int, int, int] = (20, 20, 20, 255),
+    border_width: int = 3,
+    corner_radius: int = 18,
+    tail_size: int = 18,
+    tail_x_ratio: float = 0.3,
+    padding: int = 14,
+    font_path: Optional[str] = None,
+    font_size: Optional[int] = None,   # auto if None
+    bubble_top_margin: int = 12,       # px from top of canvas to bubble top
+    max_bubble_height_ratio: float = 0.38,  # bubble may use at most 38% of canvas height
+) -> Image.Image:
+    """
+    Compose a WhatsApp-style sticker:
+
+    - Transparent 512×512 canvas (RGBA)
+    - Base image (character) centered at the bottom half
+    - Comic speech bubble (white, black border) in the top area
+    - Text auto-wrapped to fit inside the bubble
+    - Pointed tail from bubble bottom toward the character
+
+    Args:
+        base_image: PIL Image of the avatar/character.
+        text:       Text to show in the speech bubble.
+        output_path: If given, the result is also saved here.
+        output_format: "WEBP" (default, WhatsApp) or "PNG".
+        canvas_size: Side length of the square canvas (default 512).
+        bubble_color: RGBA fill for the bubble.
+        border_color: RGBA outline color.
+        text_color:  RGBA text color.
+        border_width: Border stroke width in pixels.
+        corner_radius: Rounded corner radius.
+        tail_size:   Height of the triangular tail.
+        tail_x_ratio: Horizontal position of tail along bubble bottom (0=left, 1=right).
+        padding:     Inner padding between bubble edge and text.
+        font_path:   Path to a .ttf font (auto-detected if None).
+        font_size:   Font size in px (auto-scaled from text length if None).
+        bubble_top_margin: Gap between canvas top and bubble top.
+        max_bubble_height_ratio: Max fraction of canvas the bubble can occupy.
+
+    Returns:
+        RGBA PIL Image ready to send as sticker.
+    """
+
+    # ── 1. Canvas ────────────────────────────────────────────────────────────
+    canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
+
+    # ── 2. Paste character image (bottom-center, takes ~60% of height) ───────
+    char_area_h = int(canvas_size * 0.62)
+    char_area_w = canvas_size
+
+    char = remove_background(base_image)
+    # Recortar el padding transparente para que thumbnail y posición sean exactos
+    bbox = char.getbbox()
+    if bbox:
+        char = char.crop(bbox)
+    char.thumbnail((char_area_w, char_area_h), Image.LANCZOS)
+    char_x = (canvas_size - char.width) // 2
+    char_y = canvas_size - char.height          # flush with bottom
+    canvas.paste(char, (char_x, char_y), char)
+
+    # Top visual del personaje en el canvas — aquí apunta la cola del globo
+    char_visual_top = char_y
+
+    # ── 3. Font & auto-size ──────────────────────────────────────────────────
+    bubble_max_w = int(canvas_size * 0.82)
+
+    if font_size is None:
+        # Scale font down for longer texts
+        font_size = 26 if len(text) <= 40 else (22 if len(text) <= 80 else 18)
+
+    font = _load_font(font_size, font_path)
+
+    # ── 4. Wrap text to fit inside the bubble ────────────────────────────────
+    inner_max_w = bubble_max_w - 2 * padding
+    lines = _wrap_text(text, font, inner_max_w)
+    _, text_h = _measure_lines(lines, font)
+    bubble_h = text_h + 2 * padding
+
+    # Clamp bubble height to max_bubble_height_ratio
+    max_bh = int(canvas_size * max_bubble_height_ratio) - tail_size
+    if bubble_h > max_bh:
+        # Reduce font until it fits
+        while bubble_h > max_bh and font_size > 10:
+            font_size -= 1
+            font = _load_font(font_size, font_path)
+            lines = _wrap_text(text, font, inner_max_w)
+            _, text_h = _measure_lines(lines, font)
+            bubble_h = text_h + 2 * padding
+
+    # ── 5. Bubble geometry ────────────────────────────────────────────────────
+    bubble_w = min(bubble_max_w, max(
+        int(_measure_lines(lines, font)[0] + 2 * padding + 16),
+        bubble_max_w // 2,
+    ))
+    bx1 = (canvas_size - bubble_w) // 2
+    bx2 = bx1 + bubble_w
+
+    # Posicionar el globo justo encima del personaje (con 8px de margen entre cola y cabeza)
+    by2 = char_visual_top - tail_size - 8
+    by2 = max(by2, bubble_top_margin + bubble_h)   # nunca salirse del canvas por arriba
+    by1 = by2 - bubble_h
+    bubble_box = (bx1, by1, bx2, by2)
+
+    # ── 6. Draw bubble on canvas ─────────────────────────────────────────────
+    draw = ImageDraw.Draw(canvas)
+
+    _draw_rounded_rect(draw, bubble_box, corner_radius, bubble_color, border_color, border_width)
+    _draw_tail(draw, bubble_box, tail_size, bubble_color, border_color, border_width, tail_x_ratio)
+    _draw_text_in_bubble(draw, lines, font, bubble_box, text_color, padding)
+
+    # ── 7. Save & return ──────────────────────────────────────────────────────
+    if output_path:
+        fmt = output_format.upper()
+        save_kwargs = {"format": fmt}
+        if fmt == "WEBP":
+            save_kwargs.update({"quality": 90, "method": 6})
+        canvas.save(output_path, **save_kwargs)
+
+    return canvas
+
+
+# ── Backwards-compatible wrappers ─────────────────────────────────────────────
 
 class SpeechBubbleStyle:
-    """Speech bubble configuration"""
-    
+    """Legacy config object kept for backwards compatibility."""
+
     def __init__(
         self,
         bubble_color: Tuple[int, int, int] = (255, 255, 255),
         text_color: Tuple[int, int, int] = (0, 0, 0),
         border_color: Tuple[int, int, int] = (0, 0, 0),
-        border_width: int = 2,
-        padding: int = 15,
-        corner_radius: int = 15,
-        tail_size: int = 15,
-        tail_position: str = "bottom-left",  # bottom-left, bottom-right, top-left, top-right
-        bubble_style: str = "normal"
+        border_width: int = 3,
+        padding: int = 14,
+        corner_radius: int = 18,
+        tail_size: int = 18,
+        tail_position: str = "bottom-left",
+        bubble_style: str = "comic",
     ):
-        """
-        Initialize speech bubble style
-        
-        Args:
-            bubble_color: RGB tuple for bubble fill color
-            text_color: RGB tuple for text color
-            border_color: RGB tuple for border color
-            border_width: Width of the border in pixels
-            padding: Internal padding around text
-            corner_radius: Radius of rounded corners
-            tail_size: Size of the tail/pointer
-            tail_position: Position of the tail
-            bubble_style: Style of bubble, e.g. "normal" or "comic"
-        """
-        self.bubble_color = bubble_color
-        self.text_color = text_color
-        self.border_color = border_color
-        self.border_width = border_width
-        self.padding = padding
+        self.bubble_color  = bubble_color
+        self.text_color    = text_color
+        self.border_color  = border_color
+        self.border_width  = border_width
+        self.padding       = padding
         self.corner_radius = corner_radius
-        self.tail_size = tail_size
+        self.tail_size     = tail_size
         self.tail_position = tail_position
-        self.bubble_style = bubble_style
+        self.bubble_style  = bubble_style
 
 
 class ImageWithSpeechBubble:
-    """Service for adding speech bubbles to images"""
-    
-    @staticmethod
-    def _wrap_text(text: str, max_chars: int = 40) -> str:
-        """Wrap text to fit in max characters per line"""
-        lines = []
-        for line in text.split('\n'):
-            if len(line) > max_chars:
-                wrapped = textwrap.fill(line, width=max_chars)
-                lines.extend(wrapped.split('\n'))
-            else:
-                lines.append(line)
-        return '\n'.join(lines)
-    
-    @staticmethod
-    def _get_text_size(text: str, font: ImageFont.FreeTypeFont) -> Tuple[int, int]:
-        """Get the size of text when rendered"""
-        bbox = font.getbbox(text)
-        return bbox[2] - bbox[0], bbox[3] - bbox[1]
-    
-    @staticmethod
-    def _draw_rounded_rectangle(
-        draw: ImageDraw.ImageDraw,
-        xy: Tuple[int, int, int, int],
-        radius: int,
-        fill: Tuple[int, int, int],
-        outline: Tuple[int, int, int],
-        width: int = 1
-    ):
-        """Draw a rounded rectangle"""
-        x1, y1, x2, y2 = xy
-        
-        # Draw four corners
-        draw.arc([x1, y1, x1 + 2*radius, y1 + 2*radius], 180, 270, outline, width)
-        draw.arc([x2 - 2*radius, y1, x2, y1 + 2*radius], 270, 360, outline, width)
-        draw.arc([x2 - 2*radius, y2 - 2*radius, x2, y2], 0, 90, outline, width)
-        draw.arc([x1, y2 - 2*radius, x1 + 2*radius, y2], 90, 180, outline, width)
-        
-        # Draw connecting lines
-        draw.line([(x1 + radius, y1), (x2 - radius, y1)], outline, width)
-        draw.line([(x1 + radius, y2), (x2 - radius, y2)], outline, width)
-        draw.line([(x1, y1 + radius), (x1, y2 - radius)], outline, width)
-        draw.line([(x2, y1 + radius), (x2, y2 - radius)], outline, width)
-        
-        # Fill the rectangle
-        draw.rectangle(
-            [x1 + radius, y1, x2 - radius, y2],
-            fill=fill
-        )
-        draw.rectangle(
-            [x1, y1 + radius, x2, y2 - radius],
-            fill=fill
-        )
-    
-    @staticmethod
-    def _draw_text_with_outline(
-        draw: ImageDraw.ImageDraw,
-        position: Tuple[int, int],
-        text: str,
-        font: ImageFont.FreeTypeFont,
-        fill: Tuple[int, int, int],
-        outline_color: Tuple[int, int, int],
-        outline_width: int = 1
-    ):
-        """Draw text with a comic-style outline"""
-        x, y = position
-        try:
-            draw.text(
-                (x, y),
-                text,
-                font=font,
-                fill=fill,
-                stroke_width=outline_width,
-                stroke_fill=outline_color
-            )
-        except TypeError:
-            for dx in range(-outline_width, outline_width + 1):
-                for dy in range(-outline_width, outline_width + 1):
-                    if dx == 0 and dy == 0:
-                        continue
-                    draw.text((x + dx, y + dy), text, font=font, fill=outline_color)
-            draw.text((x, y), text, font=font, fill=fill)
+    """Legacy class — delegates to generate_sticker()."""
 
     @staticmethod
-    def _draw_centered_text(
-        draw: ImageDraw.ImageDraw,
-        xy: Tuple[int, int, int, int],
-        text: str,
-        font: ImageFont.FreeTypeFont,
-        style: SpeechBubbleStyle
-    ):
-        """Draw multiline text centered inside a bubble"""
-        x1, y1, x2, y2 = xy
-        lines = text.split('\n')
-        line_sizes = [font.getbbox(line) for line in lines]
-        line_widths = [bbox[2] - bbox[0] for bbox in line_sizes]
-        line_heights = [bbox[3] - bbox[1] for bbox in line_sizes]
-        total_height = sum(line_heights) + (len(lines) - 1) * 4
-
-        bubble_width = x2 - x1
-        bubble_height = y2 - y1
-        current_y = y1 + ((bubble_height - total_height) // 2)
-
-        for line, width, height in zip(lines, line_widths, line_heights):
-            text_x = x1 + (bubble_width - width) // 2
-            text_y = current_y
-            if style.bubble_style == "comic":
-                ImageWithSpeechBubble._draw_text_with_outline(
-                    draw,
-                    (text_x, text_y),
-                    line,
-                    font,
-                    style.text_color,
-                    style.border_color,
-                    outline_width=1
-                )
-            else:
-                draw.text(
-                    (text_x, text_y),
-                    line,
-                    fill=style.text_color,
-                    font=font
-                )
-            current_y += height + 4
-
-    def _draw_speech_bubble(
+    def add_speech_bubble_from_image(
         image: Image.Image,
-        xy: Tuple[int, int, int, int],
         text: str,
-        style: SpeechBubbleStyle,
-        font: Optional[ImageFont.FreeTypeFont] = None
+        style: Optional[SpeechBubbleStyle] = None,
+        bubble_position: str = "top",
+        bubble_width_ratio: float = 0.82,
+        font_size: int = 22,
+        font_path: Optional[str] = None,
     ) -> Image.Image:
-        """Draw speech bubble on image"""
-        
-        draw = ImageDraw.Draw(image)
-        x1, y1, x2, y2 = xy
-        
-        # Draw bubble background
-        if style.bubble_style == "comic":
-            spike = min(12, style.corner_radius)
-            gap = max(20, (x2 - x1) // 8)
-            points = []
-            current_x = x1
-            while current_x < x2:
-                points.append((current_x, y1 - (spike if len(points) % 2 == 0 else 0)))
-                current_x += gap
-            points.append((x2, y1))
-            current_y = y1
-            while current_y < y2:
-                points.append((x2 + (spike if len(points) % 2 == 0 else 0), current_y))
-                current_y += gap
-            points.append((x2, y2))
-            current_x = x2
-            while current_x > x1:
-                points.append((current_x, y2 + (spike if len(points) % 2 == 0 else 0)))
-                current_x -= gap
-            points.append((x1, y2))
-            current_y = y2
-            while current_y > y1:
-                points.append((x1 - (spike if len(points) % 2 == 0 else 0), current_y))
-                current_y -= gap
-            draw.polygon(points, fill=style.bubble_color)
-            draw.line(points + [points[0]], fill=style.border_color, width=style.border_width)
-        else:
-            draw.polygon(
-                [(x1, y1), (x2, y1), (x2, y2), (x1, y2)],
-                fill=style.bubble_color
-            )
-            draw.rectangle(
-                xy,
-                outline=style.border_color,
-                width=style.border_width
-            )
-        
-        # Draw tail
-        tail_xoffset = (x2 - x1) // 3 if "left" in style.tail_position else 2 * (x2 - x1) // 3
-        
-        if "bottom" in style.tail_position:
-            tail_points = [
-                (x1 + tail_xoffset, y2),
-                (x1 + tail_xoffset - style.tail_size, y2 + style.tail_size),
-                (x1 + tail_xoffset + style.tail_size, y2 + style.tail_size),
-            ]
-        else:  # top
-            tail_points = [
-                (x1 + tail_xoffset, y1),
-                (x1 + tail_xoffset - style.tail_size, y1 - style.tail_size),
-                (x1 + tail_xoffset + style.tail_size, y1 - style.tail_size),
-            ]
-        
-        draw.polygon(tail_points, fill=style.bubble_color)
-        draw.polygon(tail_points, outline=style.border_color, width=style.border_width)
-        
-        # Draw centered text
-        if font is None:
-            font = ImageFont.load_default()
-
-        ImageWithSpeechBubble._draw_centered_text(
-            draw,
-            xy,
+        s = style or SpeechBubbleStyle()
+        result = generate_sticker(
+            image,
             text,
-            font,
-            style
+            bubble_color=(*s.bubble_color, 255),
+            border_color=(*s.border_color, 255),
+            text_color=(*s.text_color, 255),
+            border_width=s.border_width,
+            corner_radius=s.corner_radius,
+            tail_size=s.tail_size,
+            padding=s.padding,
+            font_path=font_path,
+            font_size=font_size,
         )
-        
-        return image
-    
+        # Return RGB (without alpha) to preserve existing behavior
+        bg = Image.new("RGB", result.size, (255, 255, 255))
+        bg.paste(result, mask=result.split()[3])
+        return bg
+
     @staticmethod
     def add_speech_bubble(
         image_path: str,
@@ -261,210 +404,14 @@ class ImageWithSpeechBubble:
         output_path: Optional[str] = None,
         style: Optional[SpeechBubbleStyle] = None,
         bubble_position: str = "top",
-        bubble_width_ratio: float = 0.8,
-        font_size: int = 20,
-        font_path: Optional[str] = None
+        bubble_width_ratio: float = 0.82,
+        font_size: int = 22,
+        font_path: Optional[str] = None,
     ) -> Image.Image:
-        """
-        Add a speech bubble with text to an image
-        
-        Args:
-            image_path: Path to the base image (avatar pose)
-            text: Text to display in the bubble
-            output_path: Path where to save the result (optional)
-            style: SpeechBubbleStyle configuration (uses default if None)
-            bubble_position: "top" or "bottom" position of the bubble
-            bubble_width_ratio: Width of bubble as ratio of image (0.0-1.0)
-            font_size: Size of the font
-            font_path: Path to TrueType font file (uses default if None)
-        
-        Returns:
-            Image object with speech bubble
-            
-        Example:
-            >>> img = add_speech_bubble(
-            ...     "avatar.png",
-            ...     "Hola mundo!",
-            ...     output_path="avatar_with_bubble.png"
-            ... )
-        """
-        
-        # Load image
-        image = Image.open(image_path).convert("RGBA")
-        img_width, img_height = image.size
-        
-        # Use default style if not provided
-        if style is None:
-            style = SpeechBubbleStyle()
-        
-        # Wrap text
-        wrapped_text = ImageWithSpeechBubble._wrap_text(text, max_chars=30)
-        
-        # Load font
-        try:
-            if font_path:
-                font = ImageFont.truetype(font_path, font_size)
-            else:
-                # Try common system fonts
-                font_candidates = [
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                    "C:\\Windows\\Fonts\\arial.ttf",
-                    "/System/Library/Fonts/Helvetica.ttc",
-                ]
-                font = None
-                for candidate in font_candidates:
-                    if os.path.exists(candidate):
-                        font = ImageFont.truetype(candidate, font_size)
-                        break
-                
-                if font is None:
-                    font = ImageFont.load_default()
-        except Exception:
-            font = ImageFont.load_default()
-        
-        # Calculate bubble dimensions
-        text_bbox = font.getbbox(wrapped_text)
-        text_width = text_bbox[2] - text_bbox[0]
-        text_height = text_bbox[3] - text_bbox[1]
-        
-        bubble_width = int(img_width * bubble_width_ratio)
-        bubble_height = text_height + (2 * style.padding)
-        
-        # Center horizontally
-        bubble_x1 = (img_width - bubble_width) // 2
-        bubble_x2 = bubble_x1 + bubble_width
-        
-        # Position vertically
-        if bubble_position == "top":
-            bubble_y1 = 20
-            bubble_y2 = bubble_y1 + bubble_height
-            style.tail_position = "bottom-left"
-        else:  # bottom
-            bubble_y2 = img_height - 20
-            bubble_y1 = bubble_y2 - bubble_height
-            style.tail_position = "top-left"
-        
-        # Draw bubble
-        image = ImageWithSpeechBubble._draw_speech_bubble(
-            image,
-            (bubble_x1, bubble_y1, bubble_x2, bubble_y2),
-            wrapped_text,
-            style,
-            font
+        image = Image.open(image_path)
+        return ImageWithSpeechBubble.add_speech_bubble_from_image(
+            image, text, style, bubble_position, bubble_width_ratio, font_size, font_path
         )
-        
-        # Convert back to RGB if needed
-        if image.mode == "RGBA":
-            background = Image.new("RGB", image.size, (255, 255, 255))
-            background.paste(image, mask=image.split()[3])
-            image = background
-        
-        # Save if output path provided
-        if output_path:
-            image.save(output_path, quality=95)
-            print(f"✓ Image saved to {output_path}")
-        
-        return image
-    
-    @staticmethod
-    def add_speech_bubble_from_image(
-        image: Image.Image,
-        text: str,
-        style: Optional[SpeechBubbleStyle] = None,
-        bubble_position: str = "top",
-        bubble_width_ratio: float = 0.8,
-        font_size: int = 20,
-        font_path: Optional[str] = None
-    ) -> Image.Image:
-        """
-        Add a speech bubble with text to a PIL Image object
-        
-        Args:
-            image: PIL Image object (RGB or RGBA)
-            text: Text to display in the bubble
-            style: SpeechBubbleStyle configuration (uses default if None)
-            bubble_position: "top" or "bottom" position of the bubble
-            bubble_width_ratio: Width of bubble as ratio of image (0.0-1.0)
-            font_size: Size of the font
-            font_path: Path to TrueType font file (uses default if None)
-        
-        Returns:
-            Image object with speech bubble
-        """
-        
-        # Convert to RGBA if needed
-        if image.mode != "RGBA":
-            image = image.convert("RGBA")
-        
-        img_width, img_height = image.size
-        
-        # Use default style if not provided
-        if style is None:
-            style = SpeechBubbleStyle()
-        
-        # Wrap text
-        wrapped_text = ImageWithSpeechBubble._wrap_text(text, max_chars=30)
-        
-        # Load font
-        try:
-            if font_path:
-                font = ImageFont.truetype(font_path, font_size)
-            else:
-                # Try common system fonts
-                font_candidates = [
-                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-                    "C:\\Windows\\Fonts\\arial.ttf",
-                    "/System/Library/Fonts/Helvetica.ttc",
-                ]
-                font = None
-                for candidate in font_candidates:
-                    if os.path.exists(candidate):
-                        font = ImageFont.truetype(candidate, font_size)
-                        break
-                
-                if font is None:
-                    font = ImageFont.load_default()
-        except Exception:
-            font = ImageFont.load_default()
-        
-        # Calculate bubble dimensions
-        text_bbox = font.getbbox(wrapped_text)
-        text_width = text_bbox[2] - text_bbox[0]
-        text_height = text_bbox[3] - text_bbox[1]
-        
-        bubble_width = int(img_width * bubble_width_ratio)
-        bubble_height = text_height + (2 * style.padding)
-        
-        # Center horizontally
-        bubble_x1 = (img_width - bubble_width) // 2
-        bubble_x2 = bubble_x1 + bubble_width
-        
-        # Position vertically
-        if bubble_position == "top":
-            bubble_y1 = 20
-            bubble_y2 = bubble_y1 + bubble_height
-            style.tail_position = "bottom-left"
-        else:  # bottom
-            bubble_y2 = img_height - 20
-            bubble_y1 = bubble_y2 - bubble_height
-            style.tail_position = "top-left"
-        
-        # Draw bubble
-        image = ImageWithSpeechBubble._draw_speech_bubble(
-            image,
-            (bubble_x1, bubble_y1, bubble_x2, bubble_y2),
-            wrapped_text,
-            style,
-            font
-        )
-        
-        # Convert back to RGB if needed for PNG/JPG export
-        if image.mode == "RGBA":
-            background = Image.new("RGB", image.size, (255, 255, 255))
-            background.paste(image, mask=image.split()[3])
-            image = background
-        
-        return image
 
 
 def add_speech_bubble(
@@ -472,29 +419,9 @@ def add_speech_bubble(
     text: str,
     output_path: Optional[str] = None,
     bubble_position: str = "top",
-    font_size: int = 20
+    font_size: int = 22,
 ) -> Image.Image:
-    """
-    Convenience function to add speech bubble to image
-    
-    Args:
-        image_path: Path to base image
-        text: Text for the speech bubble
-        output_path: Path to save result (optional)
-        bubble_position: "top" or "bottom"
-        font_size: Font size in pixels
-    
-    Returns:
-        Image with speech bubble
-        
-    Example:
-        >>> img = add_speech_bubble("avatar.png", "Hola!")
-        >>> img.save("avatar_speaking.png")
-    """
+    """Convenience function — kept for backwards compatibility."""
     return ImageWithSpeechBubble.add_speech_bubble(
-        image_path,
-        text,
-        output_path,
-        bubble_position=bubble_position,
-        font_size=font_size
+        image_path, text, output_path, bubble_position=bubble_position, font_size=font_size
     )
