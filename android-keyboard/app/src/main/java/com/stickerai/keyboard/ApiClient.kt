@@ -17,7 +17,8 @@ object ApiClient {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    private const val HOST = "http://192.168.1.89:8000/api/v1"
+    // Cambiar BACKEND_URL en app/build.gradle > defaultConfig > buildConfigField
+    private const val HOST = BuildConfig.BACKEND_URL
 
     /** Analiza texto y devuelve emoción + sugerencias (sin imagen). */
     fun getSticker(text: String, callback: Callback) {
