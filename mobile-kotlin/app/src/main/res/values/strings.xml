@@ -1,12 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">StickerAI Keyboard</string>
-    <string name="app_title">StickerAI Keyboard</string>
-    <string name="app_subtitle">Convierte tus mensajes en stickers</string>
-    <string name="input_hint">Escribe algo para probar…</string>
-    <string name="btn_generate">Vista previa</string>
-    <string name="btn_keyboard_setup">Cómo activar el teclado</string>
-    <string name="keyboard_instructions">1. Ve a Ajustes > Administrar teclados\n2. Activa StickerAI Keyboard\n3. Selecciónalo al escribir en cualquier app</string>
+    <string name="app_name">Sticker AI</string>
+    <string name="app_title">Sticker AI</string>
+    <string name="input_label">Escribe un texto para generar tu sticker</string>
+    <string name="input_hint">Ingresa tu mensaje…</string>
+    <string name="btn_generate">Generar sticker</string>
     <string name="label_emotion">Emoción detectada</string>
-    <string name="placeholder_text">Aquí se mostrará el preview de tu sticker</string>
+    <string name="label_suggestions">Sugerencias</string>
+    <string name="placeholder_text">Aquí se mostrará tu sticker generado</string>
 </resources>

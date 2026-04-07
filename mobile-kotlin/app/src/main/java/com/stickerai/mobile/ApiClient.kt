@@ -12,8 +12,7 @@ import java.util.concurrent.TimeUnit
 
 object ApiClient {
 
-    // Para emulador Android usa 10.0.2.2. Para dispositivo físico, cambia a la IP de tu PC.
-    private const val BASE_URL = "http://192.168.1.89:8000/api/v1"
+    var baseUrl: String = BuildConfig.DEFAULT_BACKEND_URL
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -22,11 +21,13 @@ object ApiClient {
 
     private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
 
+    private fun apiUrl(path: String) = "${baseUrl.trimEnd('/')}/api/v1/$path"
+
     suspend fun suggestSticker(text: String): Pair<String, List<StickerSuggestion>> =
         withContext(Dispatchers.IO) {
             val body = JSONObject().put("text", text).toString().toRequestBody(JSON_MEDIA_TYPE)
             val request = Request.Builder()
-                .url("$BASE_URL/suggest-sticker")
+                .url(apiUrl("suggest-sticker"))
                 .post(body)
                 .build()
 
@@ -57,7 +58,7 @@ object ApiClient {
                 .toString()
                 .toRequestBody(JSON_MEDIA_TYPE)
             val request = Request.Builder()
-                .url("$BASE_URL/generate-image")
+                .url(apiUrl("generate-image"))
                 .post(body)
                 .build()
 
