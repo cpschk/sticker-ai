@@ -13,9 +13,11 @@ import android.util.Base64
 import android.util.TypedValue
 import android.view.View
 import android.view.animation.OvershootInterpolator
+import android.view.Gravity
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.core.content.FileProvider
 import androidx.core.view.inputmethod.EditorInfoCompat
 import androidx.core.view.inputmethod.InputConnectionCompat
@@ -543,19 +545,41 @@ class StickerKeyboardService : InputMethodService() {
     private fun buildStickerBubbles(result: SuggestionManager.StickerResult) {
         val container = fabContainer ?: return
         container.removeAllViews()
-        repeat(3) { container.addView(makeStickerBubble(result.emotion)) }
+        result.topEmotions.forEach { emotion ->
+            container.addView(makeStickerBubble(emotion))
+        }
     }
 
-    private fun makeStickerBubble(emotion: String): ImageView {
-        val size = dp(40)
-        return ImageView(this).apply {
+    private fun makeStickerBubble(emotion: String): LinearLayout {
+        val imgSize = dp(40)
+        val imageView = ImageView(this).apply {
             setImageResource(android.R.drawable.ic_menu_gallery)
             scaleType     = ImageView.ScaleType.FIT_CENTER
             background    = resources.getDrawable(R.drawable.sticker_bubble_bg, null)
             elevation     = dp(6).toFloat()
             clipToOutline = true
-            layoutParams  = LinearLayout.LayoutParams(size, size).apply { setMargins(0, 0, dp(8), 0) }
-            setOnClickListener { generateAndInsertSticker(this, emotion) }
+            layoutParams  = LinearLayout.LayoutParams(imgSize, imgSize)
+        }
+        val label = TextView(this).apply {
+            text     = emotion
+            textSize = 9f
+            gravity  = Gravity.CENTER
+            maxLines = 1
+            setTextColor(0xFFFFFFFF.toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity     = Gravity.CENTER_HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(imgSize, dp(48)).apply {
+                setMargins(0, 0, dp(8), 0)
+            }
+            addView(imageView)
+            addView(label)
+            setOnClickListener { generateAndInsertSticker(imageView, emotion) }
         }
     }
 
