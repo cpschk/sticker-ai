@@ -321,14 +321,32 @@ class StickerKeyboardService : InputMethodService() {
                 lastFabResult = result
                 updateSuggestionBar(result)
             }
-            override fun onError() { /* fallo silencioso */ }
+            override fun onError() {
+                // Parpadeo rojo único para indicar error de red
+                fabSticker?.setColorFilter(0xFFFF4444.toInt())
+                debounceHandler.postDelayed({
+                    fabSticker?.clearColorFilter()
+                }, 600)
+            }
         })
     }
 
     private fun updateSuggestionBar(result: SuggestionManager.StickerResult) {
         suggestionBar?.removeAllViews()
         // suggest-sticker ya no devuelve imágenes; la barra queda vacía.
-        if (fabExpanded) buildStickerBubbles(result)
+        if (fabExpanded) {
+            buildStickerBubbles(result)
+            // Flash de entrada para indicar que los datos reales reemplazaron los placeholders
+            val container = fabContainer ?: return
+            for (i in 0 until container.childCount) {
+                container.getChildAt(i)?.animate()
+                    ?.alpha(0f)?.setDuration(0)
+                    ?.withEndAction {
+                        container.getChildAt(i)?.animate()
+                            ?.alpha(1f)?.setDuration(200)?.start()
+                    }?.start()
+            }
+        }
     }
 
     /**
@@ -343,12 +361,27 @@ class StickerKeyboardService : InputMethodService() {
         bubbleView.animate().alpha(0.4f).setDuration(150).start()
         bubbleView.isClickable = false
 
+        // Mostrar ícono de carga con rotación continua
+        bubbleView.setImageResource(android.R.drawable.ic_popup_sync)
+        val spinAnim = ObjectAnimator.ofFloat(bubbleView, "rotation", 0f, 360f).apply {
+            duration    = 700
+            repeatCount = ObjectAnimator.INFINITE
+            interpolator = android.view.animation.LinearInterpolator()
+            start()
+        }
+
         SuggestionManager.generateImage(text, emotion, object : SuggestionManager.ImageCallback {
             override fun onImage(base64: String) {
+                spinAnim.cancel()
+                bubbleView.rotation = 0f
+                bubbleView.setImageResource(android.R.drawable.ic_menu_gallery)
                 insertSticker(base64, emotion)
                 collapseFab()
             }
             override fun onError() {
+                spinAnim.cancel()
+                bubbleView.rotation = 0f
+                bubbleView.setImageResource(android.R.drawable.ic_menu_gallery)
                 bubbleView.animate().alpha(1f).setDuration(150).start()
                 bubbleView.isClickable = true
             }
@@ -530,9 +563,16 @@ class StickerKeyboardService : InputMethodService() {
         val size = dp(40)
         return View(this).apply {
             setBackgroundResource(R.drawable.sticker_bubble_bg)
-            alpha        = 0.4f
+            alpha        = 0.3f
             layoutParams = LinearLayout.LayoutParams(size, size).apply {
                 setMargins(0, 0, dp(8), 0)
+            }
+            // Pulso para indicar carga activa
+            ObjectAnimator.ofFloat(this, "alpha", 0.3f, 0.6f).apply {
+                duration    = 800
+                repeatCount = ObjectAnimator.INFINITE
+                repeatMode  = ObjectAnimator.REVERSE
+                start()
             }
         }
     }
