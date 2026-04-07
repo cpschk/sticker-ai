@@ -49,10 +49,10 @@ app/src/main/java/com/stickerai/mobile/
 
 ### Key implementation notes
 
-- **Backend URL** — hardcoded in `ApiClient.kt`: `http://10.0.2.2:8000/api/v1` (Android emulator loopback to host). Change to your machine's LAN IP when testing on a physical device.
-- **No DI framework** — `ApiClient` is a plain `object` singleton; `StickerViewModel` is created by `viewModels()` delegate.
+- **Backend URL** — configurada en `AppPreferences` (SharedPreferences), con fallback a `BuildConfig.DEFAULT_BACKEND_URL` (`http://192.168.1.89:8000`). Se puede modificar en runtime desde el diálogo ⚙️ del ActionBar sin recompilar.
+- **No DI framework** — `ApiClient` is a plain `object` singleton; `StickerViewModel` (extends `AndroidViewModel`) is created by `viewModels()` delegate.
 - **Error handling** — any exception in `generateSticker` sets `StickerUiState.error`; `MainActivity` shows an `AlertDialog` and calls `viewModel.clearError()` on dismiss.
-- **`/api/v1/generate-image`** — this endpoint does not exist in the current backend; `ApiClient.generateImage()` will always fail. The backend's image is returned inside the `/api/v1/suggest-sticker` response as `generated_image_base64`.
+- **`/api/v1/generate-image`** — acepta `{text, emotion}` y devuelve `{image_base64: string}` (PNG en base64). El ViewModel llama primero a `/suggest-sticker` para obtener la emoción detectada, luego pasa esa emoción a `/generate-image`.
 
 ## Dependencies
 

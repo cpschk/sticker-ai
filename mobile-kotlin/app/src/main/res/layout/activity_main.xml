@@ -35,16 +35,49 @@
                     android:textSize="26sp"
                     android:textStyle="bold"
                     android:textColor="@color/text_primary"
-                    android:layout_marginBottom="12dp" />
+                    android:layout_marginBottom="20dp" />
 
-                <!-- Label -->
+                <!-- Onboarding instructions -->
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/input_label"
+                    android:text="@string/onboarding_title"
                     android:textSize="16sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_primary"
+                    android:layout_marginBottom="10dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/onboarding_step1"
+                    android:textSize="14sp"
                     android:textColor="@color/text_secondary"
-                    android:layout_marginBottom="12dp" />
+                    android:layout_marginBottom="6dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/onboarding_step2"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary"
+                    android:layout_marginBottom="6dp" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/onboarding_step3"
+                    android:textSize="14sp"
+                    android:textColor="@color/text_secondary"
+                    android:layout_marginBottom="16dp" />
+
+                <!-- Separator -->
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:background="@color/text_secondary"
+                    android:alpha="0.2"
+                    android:layout_marginBottom="16dp" />
 
                 <!-- Text input -->
                 <EditText
@@ -60,7 +93,7 @@
                     android:textSize="16sp"
                     android:textColor="@color/text_primary" />
 
-                <!-- Button -->
+                <!-- Preview button -->
                 <Button
                     android:id="@+id/btnGenerate"
                     android:layout_width="match_parent"
@@ -102,31 +135,6 @@
                         android:layout_height="wrap_content"
                         android:textSize="16sp"
                         android:textColor="@color/emotion_color" />
-                </LinearLayout>
-
-                <!-- Suggestions section -->
-                <LinearLayout
-                    android:id="@+id/sectionSuggestions"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:layout_marginBottom="20dp"
-                    android:visibility="gone">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/label_suggestions"
-                        android:textSize="18sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_primary"
-                        android:layout_marginBottom="6dp" />
-
-                    <LinearLayout
-                        android:id="@+id/containerSuggestions"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical" />
                 </LinearLayout>
 
                 <!-- Sticker image -->
