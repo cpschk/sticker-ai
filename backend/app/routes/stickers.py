@@ -21,8 +21,7 @@ from app.models.avatar_pose import AVATAR_POSES
 
 router = APIRouter(prefix="/api/v1", tags=["stickers"])
 
-# Imagen base temporal — se reemplazará con el sistema de poses/avatares
-_BASE_IMAGE_PATH = Path(__file__).parent.parent.parent / "sticker_image_test.png"
+_POSES_DIR = Path(__file__).parent.parent.parent / "assets" / "poses"
 
 
 # ── /suggest-sticker ──────────────────────────────────────────────────────────
@@ -111,10 +110,16 @@ async def generate_image(request: GenerateImageRequest):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Text cannot be empty")
 
     try:
-        if _BASE_IMAGE_PATH.exists():
-            avatar_img = Image.open(_BASE_IMAGE_PATH).convert("RGBA")
+        emotion_clean = (request.emotion or "").strip().lower()
+        pose_path = _POSES_DIR / f"{emotion_clean}.png"
+
+        if not pose_path.exists():
+            pose_path = _POSES_DIR / "default.png"
+
+        if pose_path.exists():
+            avatar_img = Image.open(pose_path).convert("RGBA")
         else:
-            avatar_img = generate_placeholder_avatar(request.emotion)
+            avatar_img = generate_placeholder_avatar(emotion_clean)
 
         result_img = generate_sticker(
             base_image=avatar_img,
@@ -126,7 +131,7 @@ async def generate_image(request: GenerateImageRequest):
         return GenerateImageResponse(image_base64=base64.b64encode(buffer.getvalue()).decode())
 
     except Exception as e:
-        print(f"Error generating sticker image (base path: {_BASE_IMAGE_PATH}): {e}")
+        print(f"Error generating sticker image (emotion={request.emotion!r}, poses_dir={_POSES_DIR}): {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Image generation failed: {e}"
