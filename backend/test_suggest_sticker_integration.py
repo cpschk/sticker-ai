@@ -163,3 +163,48 @@ Integration Status: ✨ WORKING PERFECTLY ✨
 
 if __name__ == "__main__":
     main()
+
+
+# ── pytest tests ──────────────────────────────────────────────────────────────
+
+import pytest
+from fastapi.testclient import TestClient
+from main import app
+
+_client = TestClient(app)
+
+
+def _suggest(text: str) -> dict:
+    resp = _client.post("/api/v1/suggest-sticker", json={"text": text})
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def test_top_emotions_has_three_elements():
+    data = _suggest("jajaja esto es muy gracioso!!")
+    assert len(data["top_emotions"]) == 3
+
+
+def test_top_emotions_first_matches_detected_emotion():
+    data = _suggest("jajaja esto es muy gracioso!!")
+    assert data["top_emotions"][0] == data["detected_emotion"]
+
+
+def test_top_emotions_padded_when_few_scores():
+    # "claro que si" detecta sarcasmo (solo 1 emoción con score)
+    # top_emotions debe igual tener 3 elementos
+    data = _suggest("claro que si, muy original")
+    assert len(data["top_emotions"]) == 3
+
+
+def test_top_emotions_all_strings():
+    data = _suggest("no puede ser, estoy muy enojado!!")
+    assert all(isinstance(e, str) and len(e) > 0 for e in data["top_emotions"])
+
+
+def test_top_emotions_present_when_no_emotion_detected():
+    # Texto sin palabras clave emocionales
+    data = _suggest("el sol sale cada manana")
+    # top_emotions debe ser lista (posiblemente vacía), nunca ausente
+    assert "top_emotions" in data
+    assert isinstance(data["top_emotions"], list)

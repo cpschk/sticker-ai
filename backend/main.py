@@ -1,8 +1,11 @@
 """Main FastAPI application"""
+import os
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.routes import health, analyze, stickers, emotions
 
+load_dotenv()
 
 # Create FastAPI app
 app = FastAPI(
@@ -12,9 +15,12 @@ app = FastAPI(
 )
 
 # Configure CORS
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "*")
+_allowed_origins = ["*"] if _raw_origins.strip() == "*" else [o.strip() for o in _raw_origins.split(",")]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, restrict to specific origins
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

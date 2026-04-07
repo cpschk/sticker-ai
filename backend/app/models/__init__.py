@@ -68,5 +68,6 @@ class StickerSuggestionResponse(BaseModel):
     total_suggestions: int
     avatar_pose: Optional[AvatarPoseResponse] = None
     detected_emotion: Optional[str] = None
+    top_emotions: List[str] = []
     generated_image_base64: Optional[str] = None  # Image with speech bubble as base64
     generated_image_url: Optional[str] = None  # URL to generated image (if saved)
