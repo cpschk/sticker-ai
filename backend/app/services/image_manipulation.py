@@ -205,6 +205,117 @@ def _draw_text_in_bubble(
         draw.text((lx, ly), line, font=font, fill=text_color)
 
 
+# ── Placeholder avatar generator ─────────────────────────────────────────────
+
+#: Paleta por emoción: (bg_hex, head_hex)
+_EMOTION_PALETTE: dict[str, tuple[str, str]] = {
+    "risa":      ("#FFD700", "#FFA500"),
+    "sorpresa":  ("#FF69B4", "#FFB6C1"),
+    "enojo":     ("#FF4444", "#FF8888"),
+    "tristeza":  ("#4488FF", "#99BBFF"),
+    "confusión": ("#9966CC", "#CC99FF"),
+    "sarcasmo":  ("#888888", "#BBBBBB"),
+}
+_DEFAULT_PALETTE = ("#FFFFFF", "#AAAAAA")
+
+
+def _hex(color: str) -> tuple[int, int, int, int]:
+    """Convert #RRGGBB string to RGBA tuple (alpha=255)."""
+    h = color.lstrip("#")
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16), 255)
+
+
+def generate_placeholder_avatar(emotion: str) -> Image.Image:
+    """
+    Generate a simple 300×300 cartoon face for *emotion* using only PIL.
+
+    Faces are: colored background, circular head, two dot eyes, and an
+    emotion-specific mouth.  Good enough for MVP / missing-asset fallback.
+
+    Supported emotions: risa, sorpresa, enojo, tristeza, confusión, sarcasmo.
+    Any other value produces a neutral face on white background.
+    """
+    size = 300
+    img  = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    bg_hex, head_hex = _EMOTION_PALETTE.get(emotion.lower(), _DEFAULT_PALETTE)
+    bg_color   = _hex(bg_hex)
+    head_color = _hex(head_hex)
+    outline    = (30, 30, 30, 255)
+
+    # Background
+    draw.rectangle([0, 0, size, size], fill=bg_color)
+
+    # Head circle  (centred, ~55% of canvas)
+    cx, cy = size // 2, size // 2
+    r = int(size * 0.27)
+    draw.ellipse([cx - r, cy - r, cx + r, cy + r], fill=head_color, outline=outline, width=3)
+
+    # Eyes (two filled circles, symmetric)
+    ex_off, ey_off = int(r * 0.38), int(r * 0.30)
+    er = max(4, int(r * 0.10))
+    for ex in [cx - ex_off, cx + ex_off]:
+        ey = cy - ey_off
+        draw.ellipse([ex - er, ey - er, ex + er, ey + er], fill=outline)
+
+    # Mouth — shape depends on emotion
+    mw, my = int(r * 0.55), cy + int(r * 0.35)  # mouth half-width, mouth y center
+    stroke = max(3, int(r * 0.09))
+
+    em = emotion.lower()
+
+    if em == "risa":
+        # Wide U-shaped smile
+        draw.arc([cx - mw, my - mw // 2, cx + mw, my + mw // 2],
+                 start=0, end=180, fill=outline, width=stroke)
+
+    elif em == "sorpresa":
+        # Open O mouth
+        om = max(6, int(r * 0.18))
+        draw.ellipse([cx - om, my - om, cx + om, my + om],
+                     fill=(255, 200, 150, 255), outline=outline, width=stroke)
+
+    elif em == "enojo":
+        # Straight tight line + furrowed V brows
+        draw.line([cx - mw, my, cx + mw, my], fill=outline, width=stroke)
+        bw = int(r * 0.35)
+        by = cy - int(r * 0.55)
+        for sign in (-1, 1):
+            bx = cx + sign * int(r * 0.38)
+            draw.line(
+                [bx - sign * bw // 2, by - int(r * 0.12),
+                 bx + sign * bw // 2, by + int(r * 0.12)],
+                fill=outline, width=stroke,
+            )
+
+    elif em == "tristeza":
+        # Inverted arc (frown)
+        draw.arc([cx - mw, my - mw // 2, cx + mw, my + mw // 2],
+                 start=180, end=360, fill=outline, width=stroke)
+
+    elif em == "confusión":
+        # Question mark drawn with text (large, centred)
+        font = _load_font(int(r * 0.9))
+        bbox = font.getbbox("?")
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        draw.text(
+            (cx - tw // 2, cy - th // 2),
+            "?", font=font, fill=outline,
+        )
+
+    elif em == "sarcasmo":
+        # Asymmetric smirk: left side up, right side level
+        draw.line([cx - mw, my - stroke, cx, my], fill=outline, width=stroke)
+        draw.line([cx, my, cx + mw, my + stroke],  fill=outline, width=stroke)
+
+    else:
+        # Neutral flat line
+        draw.line([cx - mw, my, cx + mw, my], fill=outline, width=stroke)
+
+    return img
+
+
 # ── Main public function ──────────────────────────────────────────────────────
 
 def generate_sticker(
