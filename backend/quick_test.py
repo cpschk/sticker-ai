@@ -56,8 +56,8 @@ def test_avatar_poses():
             print(f"  • {emotion}: {len(poses)} poses")
         
         # Ejemplo de pose
-        pose = get_pose_by_id(1)
-        print(f"\nPose de ejemplo (ID=1):")
+        pose = get_pose_by_id("pose_001")
+        print(f"\nPose de ejemplo (ID=pose_001):")
         print(f"  • Emoción: {pose.emotion}")
         print(f"  • Intensidad: {pose.intensity}")
         print(f"  • Ruta: {pose.image_path}")

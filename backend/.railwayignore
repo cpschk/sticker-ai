@@ -1,0 +1,10 @@
+__pycache__
+*.pyc
+*.pyo
+.env
+test_*.py
+demo_*.py
+example_*.py
+sticker_image_test.png
+test_avatar.png
+test_result_*.png
