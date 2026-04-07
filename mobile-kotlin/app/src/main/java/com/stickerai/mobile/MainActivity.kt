@@ -2,8 +2,6 @@ package com.stickerai.mobile
 
 import android.os.Bundle
 import android.view.View
-import android.widget.LinearLayout
-import android.widget.TextView
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -33,6 +31,14 @@ class MainActivity : AppCompatActivity() {
             viewModel.generateSticker(text)
         }
 
+        binding.btnKeyboardSetup.setOnClickListener {
+            AlertDialog.Builder(this)
+                .setTitle("Cómo activar el teclado")
+                .setMessage(getString(R.string.keyboard_instructions))
+                .setPositiveButton("Entendido", null)
+                .show()
+        }
+
         lifecycleScope.launch {
             viewModel.uiState.collect { state -> render(state) }
         }
@@ -42,7 +48,7 @@ class MainActivity : AppCompatActivity() {
         // Loading
         binding.progressBar.visibility = if (state.loading) View.VISIBLE else View.GONE
         binding.btnGenerate.isEnabled = !state.loading
-        binding.btnGenerate.text = if (state.loading) "Generando..." else "Generar sticker"
+        binding.btnGenerate.text = if (state.loading) "Generando..." else getString(R.string.btn_generate)
         binding.editText.isEnabled = !state.loading
 
         // Error
@@ -62,21 +68,7 @@ class MainActivity : AppCompatActivity() {
             binding.sectionEmotion.visibility = View.GONE
         }
 
-        // Suggestions
-        if (state.suggestions.isNotEmpty()) {
-            binding.sectionSuggestions.visibility = View.VISIBLE
-            binding.containerSuggestions.removeAllViews()
-            state.suggestions.forEach { suggestion ->
-                val item = layoutInflater.inflate(R.layout.item_suggestion, binding.containerSuggestions, false)
-                item.findViewById<TextView>(R.id.textSuggestionName).text = suggestion.name
-                item.findViewById<TextView>(R.id.textSuggestionDesc).text = suggestion.description
-                binding.containerSuggestions.addView(item)
-            }
-        } else {
-            binding.sectionSuggestions.visibility = View.GONE
-        }
-
-        // Image
+        // Sticker image
         if (state.imageBitmap != null) {
             binding.imagePlaceholder.visibility = View.GONE
             binding.imageSticker.visibility = View.VISIBLE

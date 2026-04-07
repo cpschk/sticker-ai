@@ -35,16 +35,16 @@
                     android:textSize="26sp"
                     android:textStyle="bold"
                     android:textColor="@color/text_primary"
-                    android:layout_marginBottom="12dp" />
+                    android:layout_marginBottom="4dp" />
 
-                <!-- Label -->
+                <!-- Subtitle -->
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="@string/input_label"
+                    android:text="@string/app_subtitle"
                     android:textSize="16sp"
                     android:textColor="@color/text_secondary"
-                    android:layout_marginBottom="12dp" />
+                    android:layout_marginBottom="20dp" />
 
                 <!-- Text input -->
                 <EditText
@@ -60,7 +60,7 @@
                     android:textSize="16sp"
                     android:textColor="@color/text_primary" />
 
-                <!-- Button -->
+                <!-- Preview button -->
                 <Button
                     android:id="@+id/btnGenerate"
                     android:layout_width="match_parent"
@@ -68,6 +68,15 @@
                     android:text="@string/btn_generate"
                     android:layout_marginTop="16dp"
                     android:layout_marginBottom="8dp" />
+
+                <!-- Keyboard setup button -->
+                <Button
+                    android:id="@+id/btnKeyboardSetup"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/btn_keyboard_setup"
+                    android:layout_marginBottom="8dp"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton" />
 
                 <!-- Progress -->
                 <ProgressBar
@@ -102,31 +111,6 @@
                         android:layout_height="wrap_content"
                         android:textSize="16sp"
                         android:textColor="@color/emotion_color" />
-                </LinearLayout>
-
-                <!-- Suggestions section -->
-                <LinearLayout
-                    android:id="@+id/sectionSuggestions"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:layout_marginBottom="20dp"
-                    android:visibility="gone">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/label_suggestions"
-                        android:textSize="18sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_primary"
-                        android:layout_marginBottom="6dp" />
-
-                    <LinearLayout
-                        android:id="@+id/containerSuggestions"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="vertical" />
                 </LinearLayout>
 
                 <!-- Sticker image -->
