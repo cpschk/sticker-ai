@@ -1,16 +1,19 @@
 package com.stickerai.mobile
 
+import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
-import androidx.lifecycle.ViewModel
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
-class StickerViewModel : ViewModel() {
+class StickerViewModel(application: Application) : AndroidViewModel(application) {
+
+    private val prefs = AppPreferences(application)
 
     private val _uiState = MutableStateFlow(StickerUiState())
     val uiState: StateFlow<StickerUiState> = _uiState.asStateFlow()
@@ -18,6 +21,7 @@ class StickerViewModel : ViewModel() {
     fun generateSticker(text: String) {
         if (text.isBlank()) return
 
+        ApiClient.baseUrl = prefs.getBackendUrl()
         _uiState.value = StickerUiState(loading = true)
 
         viewModelScope.launch {
