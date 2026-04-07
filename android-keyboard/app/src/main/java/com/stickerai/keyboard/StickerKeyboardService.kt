@@ -18,6 +18,7 @@ import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.core.view.inputmethod.EditorInfoCompat
 import androidx.core.view.inputmethod.InputConnectionCompat
@@ -392,11 +393,17 @@ class StickerKeyboardService : InputMethodService() {
 
     /**
      * Intenta insertar el sticker como imagen rica (commitContent).
-     * Si el campo de texto receptor no soporta imágenes, inserta texto de fallback.
+     * Si el campo de texto receptor no soporta imágenes, muestra un Toast informativo.
      */
     private fun insertSticker(base64: String, emotion: String) {
         if (!tryCommitContent(base64, emotion)) {
-            currentInputConnection?.commitText("[$emotion]", 1)
+            Handler(Looper.getMainLooper()).post {
+                Toast.makeText(
+                    applicationContext,
+                    "Esta app no soporta stickers por imagen",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
         }
     }
 
