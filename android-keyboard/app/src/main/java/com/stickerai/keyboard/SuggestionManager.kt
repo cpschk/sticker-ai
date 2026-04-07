@@ -12,7 +12,8 @@ object SuggestionManager {
 
     data class StickerResult(
         val emotion: String,
-        val suggestions: List<Suggestion>
+        val suggestions: List<Suggestion>,
+        val topEmotions: List<String> = emptyList()
     )
 
     data class Suggestion(
@@ -51,7 +52,15 @@ object SuggestionManager {
                         val json        = JSONObject(response.body!!.string())
                         val emotion     = json.optString("detected_emotion", "")
                         val suggestions = parseSuggestions(json)
-                        mainHandler.post { callback.onResult(StickerResult(emotion, suggestions)) }
+                        val topEmotions = buildList {
+                            val arr = json.optJSONArray("top_emotions")
+                            if (arr != null) {
+                                for (i in 0 until arr.length()) add(arr.getString(i))
+                            }
+                            // Garantizar 3 elementos aunque el backend mande menos
+                            while (size < 3) add(emotion)
+                        }
+                        mainHandler.post { callback.onResult(StickerResult(emotion, suggestions, topEmotions)) }
                     }.onFailure {
                         it.printStackTrace()
                         mainHandler.post { callback.onError() }
