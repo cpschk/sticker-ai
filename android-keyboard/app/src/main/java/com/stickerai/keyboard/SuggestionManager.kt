@@ -32,6 +32,11 @@ object SuggestionManager {
         fun onError()
     }
 
+    interface ThumbnailCallback {
+        fun onThumbnail(emotion: String, base64: String)
+        fun onError(emotion: String)
+    }
+
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /** Obtiene emoción + sugerencias para un texto (sin generar imagen). */
@@ -68,6 +73,30 @@ object SuggestionManager {
                 }
             }
         })
+    }
+
+    /** Obtiene miniaturas del gato para cada emoción en paralelo (sin texto). */
+    fun fetchPoseThumbnails(emotions: List<String>, callback: ThumbnailCallback) {
+        emotions.forEach { emotion ->
+            ApiClient.getPoseImage(emotion, object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    mainHandler.post { callback.onError(emotion) }
+                }
+                override fun onResponse(call: Call, response: Response) {
+                    response.use {
+                        if (!response.isSuccessful) {
+                            mainHandler.post { callback.onError(emotion) }
+                            return
+                        }
+                        runCatching {
+                            val base64 = JSONObject(response.body!!.string())
+                                .getString("image_base64")
+                            mainHandler.post { callback.onThumbnail(emotion, base64) }
+                        }.onFailure { mainHandler.post { callback.onError(emotion) } }
+                    }
+                }
+            })
+        }
     }
 
     /** Genera el sticker final (personaje + globo) y devuelve su base64. */

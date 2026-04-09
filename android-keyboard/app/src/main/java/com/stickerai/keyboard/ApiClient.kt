@@ -30,6 +30,16 @@ object ApiClient {
         ).enqueue(callback)
     }
 
+    /** Obtiene la imagen del gato para una emoción, sin texto (miniatura). */
+    fun getPoseImage(emotion: String, callback: Callback) {
+        client.newCall(
+            Request.Builder()
+                .url("$HOST/pose/${emotion.trim().lowercase()}")
+                .get()
+                .build()
+        ).enqueue(callback)
+    }
+
     /** Genera el sticker final (personaje + globo) para un texto y emoción dados. */
     fun generateImage(text: String, emotion: String, callback: Callback) {
         val body = JSONObject().apply {

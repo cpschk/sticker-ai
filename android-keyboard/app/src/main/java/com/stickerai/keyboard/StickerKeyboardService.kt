@@ -546,15 +546,39 @@ class StickerKeyboardService : InputMethodService() {
     }
 
     /**
-     * 3 burbujas idénticas — muestran el ícono del personaje (placeholder).
+     * Burbujas con placeholder animado; carga miniaturas reales en paralelo vía /pose/{emotion}.
      * Al tocar → /generate-image → sticker final (gato + globo con texto actual) → chat.
      */
     private fun buildStickerBubbles(result: SuggestionManager.StickerResult) {
         val container = fabContainer ?: return
         container.removeAllViews()
+
+        // Burbujas con placeholder animado
         result.topEmotions.forEach { emotion ->
             container.addView(makeStickerBubble(emotion))
         }
+
+        // Cargar miniaturas reales en paralelo
+        SuggestionManager.fetchPoseThumbnails(
+            result.topEmotions,
+            object : SuggestionManager.ThumbnailCallback {
+                override fun onThumbnail(emotion: String, base64: String) {
+                    val idx = result.topEmotions.indexOf(emotion)
+                    if (idx < 0 || idx >= container.childCount) return
+                    val layout    = container.getChildAt(idx) as? LinearLayout ?: return
+                    val imageView = layout.getChildAt(0) as? ImageView ?: return
+                    // Cancelar animación de pulso
+                    (imageView.tag as? ObjectAnimator)?.cancel()
+                    // Mostrar imagen real
+                    val bytes  = android.util.Base64.decode(base64, android.util.Base64.DEFAULT)
+                    val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                    imageView.setImageBitmap(bitmap)
+                    imageView.scaleType = ImageView.ScaleType.CENTER_CROP
+                    imageView.alpha = 1f
+                }
+                override fun onError(emotion: String) { /* mantiene placeholder */ }
+            }
+        )
     }
 
     private fun makeStickerBubble(emotion: String): LinearLayout {
@@ -566,6 +590,13 @@ class StickerKeyboardService : InputMethodService() {
             elevation     = dp(6).toFloat()
             clipToOutline = true
             layoutParams  = LinearLayout.LayoutParams(imgSize, imgSize)
+            // Pulso de espera hasta que llegue la miniatura real
+            tag = ObjectAnimator.ofFloat(this, "alpha", 0.3f, 0.7f).apply {
+                duration    = 800
+                repeatCount = ObjectAnimator.INFINITE
+                repeatMode  = ObjectAnimator.REVERSE
+                start()
+            }
         }
         val label = TextView(this).apply {
             text     = emotion
