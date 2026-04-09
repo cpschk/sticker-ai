@@ -14,7 +14,7 @@ android {
         // ── Backend URL ───────────────────────────────────────────────────────
         // Cambia esta URL para apuntar al servidor. Se inyecta en BuildConfig,
         // así que un solo cambio aquí afecta toda la app sin tocar código Kotlin.
-        buildConfigField "String", "BACKEND_URL", '"http://192.168.1.89:8000/api/v1"'
+        buildConfigField "String", "BACKEND_URL", '"https://sticker-ai-production.up.railway.app/api/v1"'
     }
 
     buildTypes {
