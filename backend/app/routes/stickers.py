@@ -24,6 +24,47 @@ router = APIRouter(prefix="/api/v1", tags=["stickers"])
 _POSES_DIR = Path(__file__).parent.parent.parent / "assets" / "poses"
 
 
+# ── /pose/{emotion} ───────────────────────────────────────────────────────────
+
+class PoseImageResponse(BaseModel):
+    image_base64: str
+    emotion: str
+
+
+@router.get(
+    "/pose/{emotion}",
+    status_code=status.HTTP_200_OK,
+    response_model=PoseImageResponse
+)
+async def get_pose_image(emotion: str):
+    """
+    Devuelve la imagen del avatar para una emoción dada, sin texto ni globo.
+    Se usa para mostrar miniaturas en el teclado antes de que el usuario elija.
+    """
+    emotion_clean = emotion.strip().lower()
+    pose_path = _POSES_DIR / f"{emotion_clean}.png"
+
+    if not pose_path.exists():
+        pose_path = _POSES_DIR / "default.png"
+
+    if pose_path.exists():
+        img = Image.open(pose_path).convert("RGBA")
+    else:
+        img = generate_placeholder_avatar(emotion_clean)
+
+    img.thumbnail((200, 200), Image.LANCZOS)
+    canvas = Image.new("RGBA", (200, 200), (0, 0, 0, 0))
+    offset = ((200 - img.width) // 2, (200 - img.height) // 2)
+    canvas.paste(img, offset, img)
+
+    buffer = BytesIO()
+    canvas.save(buffer, format="PNG")
+    return PoseImageResponse(
+        image_base64=base64.b64encode(buffer.getvalue()).decode(),
+        emotion=emotion_clean
+    )
+
+
 # ── /suggest-sticker ──────────────────────────────────────────────────────────
 
 @router.post(
